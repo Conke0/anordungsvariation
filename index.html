@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>System Anordnungsvariation Visualizer</title>
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js & OrbitControls -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+</head>
+<body class="bg-slate-900 text-slate-100 h-screen flex flex-col font-sans overflow-hidden">
+
+  <!-- Header -->
+  <header class="bg-slate-800 border-b border-slate-700 px-6 py-3 flex justify-between items-center z-10">
+    <div>
+      <h1 class="text-xl font-bold text-sky-400">Cube Assembly Variation Solver</h1>
+      <p class="text-xs text-slate-400">GUI-basierte Konfiguration für GitHub Pages</p>
+    </div>
+    <button id="btnSolve" class="bg-sky-500 hover:bg-sky-400 font-bold px-6 py-2 rounded-lg text-slate-900 shadow-lg shadow-sky-500/20 transition">
+      Variationen Berechnen &amp; 3D Vorschau
+    </button>
+  </header>
+
+  <div class="flex flex-1 overflow-hidden">
+    
+    <!-- Left Sidebar: GUI Controls -->
+    <aside class="w-2/5 min-w-[380px] max-w-[500px] bg-slate-800 border-r border-slate-700 p-4 flex flex-col gap-4 overflow-y-auto">
+      
+      <!-- System Setup GUI -->
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 flex flex-col gap-3">
+        <h2 class="text-md font-semibold text-sky-300 border-b border-slate-800 pb-2">1. Grundeinstellungen</h2>
+        
+        <div class="grid grid-cols-2 gap-4">
+          <div>
+            <label class="text-xs text-slate-400 font-medium block mb-1">Anzahl Komponenten:</label>
+            <input type="number" id="targetCount" value="3" min="1" max="6" 
+                   class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-center font-bold text-sky-300 focus:outline-none focus:border-sky-500">
+          </div>
+
+          <div>
+            <label class="text-xs text-slate-400 font-medium block mb-1">Startkomponente:</label>
+            <select id="startComponentSelect" class="w-full bg-slate-800 border border-slate-600 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:border-sky-500">
+              <!-- Dynamisch befüllt -->
+            </select>
+          </div>
+        </div>
+      </div>
+
+      <!-- Component Manager GUI -->
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-700 flex flex-col gap-3 flex-1 overflow-hidden">
+        <div class="flex justify-between items-center border-b border-slate-800 pb-2">
+          <h2 class="text-md font-semibold text-sky-300">2. Komponenten &amp; Ports verwalten</h2>
+          <button id="btnAddComp" class="bg-emerald-600 hover:bg-emerald-500 text-xs px-3 py-1 rounded font-semibold transition">
+            + Neuer Würfel
+          </button>
+        </div>
+
+        <!-- Scrollbare Liste aller Würfel -->
+        <div id="componentsList" class="flex-1 overflow-y-auto pr-1 flex flex-col gap-3">
+          <!-- Dynamisch generierte Komponenten-Karten -->
+        </div>
+      </div>
+
+      <!-- Solution Selector -->
+      <div class="bg-slate-900 p-4 rounded-xl border border-slate-700">
+        <div class="flex justify-between items-center mb-2">
+          <h2 class="text-md font-semibold text-sky-300">3. Lösungen</h2>
+          <span class="text-xs bg-sky-950 text-sky-400 px-2 py-0.5 rounded border border-sky-800 font-mono">
+            Gefunden: <strong id="solutionCount">0</strong>
+          </span>
+        </div>
+        <select id="solutionSelect" class="w-full bg-slate-800 border border-slate-600 rounded-lg p-2 text-sm" disabled>
+          <option>Keine Lösungen generiert</option>
+        </select>
+      </div>
+
+    </aside>
+
+    <!-- Right Area: 3D Canvas -->
+    <main class="flex-1 relative bg-slate-950">
+      <div id="canvasContainer" class="w-full h-full"></div>
+      
+      <!-- Overlay Info -->
+      <div id="infoBox" class="absolute top-4 left-4 bg-slate-900/90 backdrop-blur border border-slate-700 p-4 rounded-xl shadow-xl text-xs hidden max-w-xs">
+        <h3 class="font-bold text-sky-400 mb-2 border-b border-slate-800 pb-1" id="infoTitle">Variations Details</h3>
+        <p id="infoDetails" class="text-slate-300 font-mono whitespace-pre-line leading-relaxed"></p>
+      </div>
+    </main>
+
+  </div>
+
+  <!-- Application Logic & Data -->
+  <script>
+    // Standard-Komponenten-Datenbank (GUI-basiert)
+    let componentsData = [
+      {
+        id: "crank",
+        name: "Crank",
+        ports: [
+          { id: "front", pos: [50, 0, 0], dir: [1, 0, 0], type: "frame", required: false },
+          { id: "rear", pos: [-50, 0, 0], dir: [-1, 0, 0], type: "frame", required: false },
+          { id: "top", pos: [0, 0, 50], dir: [0, 0, 1], type: "seatpost", required: true }
+        ]
+      },
+      {
+        id: "handlebar",
+        name: "Handlebar",
+        ports: [
+          { id: "rear", pos: [-50, 0, 0], dir: [-1, 0, 0], type: "frame_tube", required: true },
+          { id: "bottom", pos: [0, 0, -50], dir: [0, 0, -1], type: "frame", required: false }
+        ]
+      },
+      {
+        id: "saddle",
+        name: "Saddle",
+        ports: [
+          { id: "front", pos: [50, 0, 0], dir: [1, 0, 0], type: "frame_tube", required: true },
+          { id: "bottom", pos: [0, 0, -50], dir: [0, 0, -1], type: "seatpost", required: true }
+        ]
+      },
+      {
+        id: "cargo_area",
+        name: "Cargo Area",
+        ports: [
+          { id: "rear", pos: [-50, 0, 0], dir: [-1, 0, 0], type: "frame", required: false },
+          { id: "front", pos: [50, 0, 0], dir: [1, 0, 0], type: "frame", required: false },
+          { id: "bottom", pos: [0, 0, -50], dir: [0, 0, -1], type: "frame", required: false }
+        ]
+      },
+      {
+        id: "front_wheel",
+        name: "Front Wheel",
+        ports: [
+          { id: "rear", pos: [-50, 0, 0], dir: [-1, 0, 0], type: "frame", required: false },
+          { id: "top", pos: [0, 0, 50], dir: [0, 0, 1], type: "frame", required: false }
+        ]
+      },
+      {
+        id: "back_wheel",
+        name: "Back Wheel",
+        ports: [
+          { id: "front", pos: [50, 0, 0], dir: [1, 0, 0], type: "frame", required: false },
+          { id: "top", pos: [0, 0, 50], dir: [0, 0, 1], type: "frame", required: false }
+        ]
+      }
+    ];
+
+    let scene, camera, renderer, controls;
+    let solutions = [];
+    const colors = [0x38bdf8, 0x4ade80, 0xfacc15, 0xf87171, 0xc084fc, 0xf472b6];
+
+    // --- GUI RENDER FUNCTIONS ---
+
+    function renderGUI() {
+      // 1. Update Start Component Select
+      const startSelect = document.getElementById('startComponentSelect');
+      const currentStart = startSelect.value || "crank";
+      startSelect.innerHTML = '';
+      componentsData.forEach(comp => {
+        const opt = document.createElement('option');
+        opt.value = comp.id;
+        opt.innerText = comp.name;
+        if (comp.id === currentStart) opt.selected = true;
+        startSelect.appendChild(opt);
+      });
+
+      // 2. Render Components List
+      const listContainer = document.getElementById('componentsList');
+      listContainer.innerHTML = '';
+
+      componentsData.forEach((comp, compIdx) => {
+        const card = document.createElement('div');
+        card.className = "bg-slate-800 border border-slate-700 rounded-lg p-3 flex flex-col gap-2 text-xs";
+
+        card.innerHTML = `
+          <div class="flex justify-between items-center border-b border-slate-700 pb-2">
+            <span class="font-bold text-sky-400 text-sm">${comp.name} (${comp.id})</span>
+            <button onclick="deleteComponent(${compIdx})" class="text-rose-400 hover:text-rose-300 font-bold px-1">✕ Entfernen</button>
+          </div>
+          
+          <div class="mt-1">
+            <div class="text-slate-400 font-semibold mb-1 flex justify-between items-center">
+              <span>Ports:</span>
+              <button onclick="addPort(${compIdx})" class="text-xs bg-slate-700 hover:bg-slate-600 text-slate-200 px-2 py-0.5 rounded">+ Port</button>
+            </div>
+            
+            <div class="flex flex-col gap-1.5">
+              ${comp.ports.map((port, portIdx) => `
+                <div class="flex items-center gap-2 bg-slate-900 p-1.5 rounded border border-slate-700">
+                  <span class="font-mono text-emerald-400 w-16 truncate">${port.id}</span>
+                  <span class="bg-slate-800 text-slate-300 px-1.5 py-0.5 rounded text-[10px] border border-slate-700">${port.type}</span>
+                  <label class="ml-auto flex items-center gap-1 text-[11px] text-slate-300 cursor-pointer">
+                    <input type="checkbox" ${port.required ? 'checked' : ''} onchange="togglePortRequired(${compIdx},${portIdx})" class="rounded border-slate-600 text-sky-500">
+                    Pflicht
+                  </label>
+                  <button onclick="deletePort(${compIdx},${portIdx})" class="text-slate-500 hover:text-rose-400 font-bold ml-1">✕</button>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+        listContainer.appendChild(card);
+      });
+    }
+
+    function togglePortRequired(compIdx, portIdx) {
+      componentsData[compIdx].ports[portIdx].required = !componentsData[compIdx].ports[portIdx].required;
+    }
+
+    function deleteComponent(compIdx) {
+      if (componentsData.length <= 1) {
+        alert("Mindestens eine Komponente muss vorhanden sein.");
+        return;
+      }
+      componentsData.splice(compIdx, 1);
+      renderGUI();
+    }
+
+    function addPort(compIdx) {
+      const portId = prompt("Port ID (z.B. left, right, top):", "custom_port");
+      if (!portId) return;
+      const portType = prompt("Port Typ (z.B. frame, seatpost, frame_tube):", "frame");
+      if (!portType) return;
+
+      componentsData[compIdx].ports.push({
+        id: portId,
+        pos: [50, 0, 0],
+        dir: [1, 0, 0],
+        type: portType,
+        required: false
+      });
+      renderGUI();
+    }
+
+    function deletePort(compIdx, portIdx) {
+      componentsData[compIdx].ports.splice(portIdx, 1);
+      renderGUI();
+    }
+
+    document.getElementById('btnAddComp').addEventListener('click', () => {
+      const name = prompt("Name der neuen Komponente:", "Neuer Würfel");
+      if (!name) return;
+      const id = name.toLowerCase().replace(/\s+/g, '_');
+
+      componentsData.push({
+        id: id,
+        name: name,
+        ports: [
+          { id: "front", pos: [50, 0, 0], dir: [1, 0, 0], type: "frame", required: false },
+          { id: "rear", pos: [-50, 0, 0], dir: [-1, 0, 0], type: "frame", required: false }
+        ]
+      });
+      renderGUI();
+    });
+
+    // --- 3D ENGINE ---
+
+    function init3D() {
+      const container = document.getElementById('canvasContainer');
+      scene = new THREE.Scene();
+      scene.background = new THREE.Color(0x020617);
+
+      camera = new THREE.PerspectiveCamera(50, container.clientWidth / container.clientHeight, 1, 5000);
+      camera.position.set(400, 300, 500);
+
+      renderer = new THREE.WebGLRenderer({ antialias: true });
+      renderer.setSize(container.clientWidth, container.clientHeight);
+      container.appendChild(renderer.domElement);
+
+      controls = new THREE.OrbitControls(camera, renderer.domElement);
+      controls.enableDamping = true;
+
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+      scene.add(ambientLight);
+      const dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+      dirLight.position.set(200, 400, 300);
+      scene.add(dirLight);
+
+      const grid = new THREE.GridHelper(1000, 20, 0x334155, 0x1e293b);
+      scene.add(grid);
+
+      window.addEventListener('resize', () => {
+        camera.aspect = container.clientWidth / container.clientHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(container.clientWidth, container.clientHeight);
+      });
+
+      animate();
+    }
+
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+
+    // --- SOLVER ALGORITHM ---
+
+    function solveConfigurations(targetCount, startId) {
+      const componentsMap = {};
+      componentsData.forEach(c => componentsMap[c.id] = c);
+
+      // Pflicht-Ports sammeln
+      const mandatoryPorts = new Set();
+      componentsData.forEach(c => {
+        c.ports.forEach(p => {
+          if (p.required) mandatoryPorts.add(`${c.id}.${p.id}`);
+        });
+      });
+
+      const results = [];
+
+      function areOpposite(dir1, dir2) {
+        return dir1[0] === -dir2[0] && dir1[1] === -dir2[1] && dir1[2] === -dir2[2];
+      }
+
+      function canConnect(p1, p2) {
+        return p1.type === p2.type && areOpposite(p1.dir, p2.dir);
+      }
+
+      function hasRequiredPorts(placed, usedPorts) {
+        for (let req of mandatoryPorts) {
+          const compId = req.split('.')[0];
+          if (placed.has(compId) && !usedPorts.has(req)) {
+            return false;
+          }
+        }
+        return true;
+      }
+
+      function backtrack(placed, usedPorts, connections, positions) {
+        if (placed.size === targetCount) {
+          if (hasRequiredPorts(placed, usedPorts)) {
+            results.push({
+              components: Array.from(placed),
+              connections: JSON.parse(JSON.stringify(connections)),
+              positions: JSON.parse(JSON.stringify(positions))
+            });
+          }
+          return;
+        }
+
+        for (let nextId in componentsMap) {
+          if (placed.has(nextId)) continue;
+          const nextComp = componentsMap[nextId];
+
+          for (let placedId of placed) {
+            const placedComp = componentsMap[placedId];
+            const placedPos = positions[placedId];
+
+            for (let p1 of placedComp.ports) {
+              const p1Key = `${placedId}.${p1.id}`;
+              if (usedPorts.has(p1Key)) continue;
+
+              for (let p2 of nextComp.ports) {
+                const p2Key = `${nextId}.${p2.id}`;
+                if (usedPorts.has(p2Key)) continue;
+
+                if (canConnect(p1, p2)) {
+                  const newPos = [
+                    placedPos[0] + p1.pos[0] - p2.pos[0],
+                    placedPos[1] + p1.pos[1] - p2.pos[1],
+                    placedPos[2] + p1.pos[2] - p2.pos[2]
+                  ];
+
+                  placed.add(nextId);
+                  usedPorts.add(p1Key);
+                  usedPorts.add(p2Key);
+                  positions[nextId] = newPos;
+                  connections.push({ c1: placedId, p1: p1.id, c2: nextId, p2: p2.id });
+
+                  backtrack(placed, usedPorts, connections, positions);
+
+                  connections.pop();
+                  delete positions[nextId];
+                  usedPorts.delete(p2Key);
+                  usedPorts.delete(p1Key);
+                  placed.delete(nextId);
+                }
+              }
+            }
+          }
+        }
+      }
+
+      const initialPlaced = new Set([startId]);
+      const initialUsedPorts = new Set();
+      const initialConnections = [];
+      const initialPositions = { [startId]: [0, 0, 0] };
+
+      backtrack(initialPlaced, initialUsedPorts, initialConnections, initialPositions);
+      return results;
+    }
+
+    function renderAssembly(solution) {
+      const objectsToRemove = [];
+      scene.children.forEach(c => {
+        if (c.type === "Group") objectsToRemove.push(c);
+      });
+      objectsToRemove.forEach(o => scene.remove(o));
+
+      const compMap = {};
+      componentsData.forEach(c => compMap[c.id] = c);
+
+      solution.components.forEach((compId, index) => {
+        const comp = compMap[compId];
+        const pos = solution.positions[compId];
+
+        const group = new THREE.Group();
+        group.position.set(pos[0], pos[2], pos[1]);
+
+        const geometry = new THREE.BoxGeometry(100, 100, 100);
+        const material = new THREE.MeshPhongMaterial({
+          color: colors[index % colors.length],
+          transparent: true,
+          opacity: 0.8
+        });
+        const mesh = new THREE.Mesh(geometry, material);
+        group.add(mesh);
+
+        const edges = new THREE.EdgesGeometry(geometry);
+        const line = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color: 0xffffff }));
+        group.add(line);
+
+        comp.ports.forEach(port => {
+          const portGeo = new THREE.SphereGeometry(6, 16, 16);
+          const portMat = new THREE.MeshBasicMaterial({ color: port.required ? 0xff0055 : 0x00ff88 });
+          const portMesh = new THREE.Mesh(portGeo, portMat);
+          portMesh.position.set(port.pos[0], port.pos[2], port.pos[1]);
+          group.add(portMesh);
+        });
+
+        scene.add(group);
+      });
+
+      document.getElementById('infoBox').classList.remove('hidden');
+      document.getElementById('infoDetails').innerText = 
+        `Beteiligte Würfel:\n${solution.components.join(', ')}\n\nVerbindungen:\n` +
+        solution.connections.map(c => `• ${c.c1}.${c.p1} ↔ ${c.c2}.${c.p2}`).join('\n');
+    }
+
+    // --- EVENT LISTENERS ---
+
+    document.getElementById('btnSolve').addEventListener('click', () => {
+      const targetCount = parseInt(document.getElementById('targetCount').value, 10);
+      const startId = document.getElementById('startComponentSelect').value;
+
+      solutions = solveConfigurations(targetCount, startId);
+
+      const select = document.getElementById('solutionSelect');
+      const countSpan = document.getElementById('solutionCount');
+      select.innerHTML = '';
+      countSpan.innerText = solutions.length;
+
+      if (solutions.length > 0) {
+        select.disabled = false;
+        solutions.forEach((sol, i) => {
+          const opt = document.createElement('option');
+          opt.value = i;
+          opt.innerText = `Variation ${i + 1} (${sol.components.join(' - ')})`;
+          select.appendChild(opt);
+        });
+        renderAssembly(solutions[0]);
+      } else {
+        select.disabled = true;
+        select.innerHTML = '<option>Keine Lösung gefunden</option>';
+        document.getElementById('infoBox').classList.add('hidden');
+      }
+    });
+
+    document.getElementById('solutionSelect').addEventListener('change', (e) => {
+      const idx = parseInt(e.target.value, 10);
+      renderAssembly(solutions[idx]);
+    });
+
+    window.onload = () => {
+      renderGUI();
+      init3D();
+      document.getElementById('btnSolve').click();
+    };
+  </script>
+</body>
+</html>
